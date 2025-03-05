@@ -1,94 +1,97 @@
-%% Preliminaries and Data Selection
+%% Preliminaries
+% Data Selection
 
-listing = dir("AllfERNSpikeFiles"); 
+% extract session .mat names
+listing = dir("3portdata"); 
 listing = struct2table(listing);
 session_ids = listing.name(~listing.isdir); 
 
-% skip sessions 10/15/16 bc of weird iFR stuff
-% skip sessions 3/11/12/13 bc of not recording P25/50/75
+% select only "good" sessions (per Dr. Hyman)
 good_sessions = readmatrix("good_sessions.csv"); 
 session_ids = string(session_ids(good_sessions));
 
+% extract recorded session ESPs
 load("SwitchTrials.mat", "SwTrial"); 
-trial_esps = SwTrial(good_sessions, 2); 
+session_esps = SwTrial(good_sessions, 2); 
 clear listing good_sessions SwTrial
-%% PCA Reproduction: Fig. 2A
+% Port Inference
+% Per |hyman2017_reproductions/group.mlx| routine: 
 
-top3_pcs = cell(length(session_ids), 4); 
-for i = 1 : length(session_ids) 
-    [filtered_and_avgd_iFRs, np_ports] = filter_and_avg_iFRs(i, session_ids); 
+sz = [size(session_ids, 1) 5];
+vartypes = ["string" repmat("double", [1 4])]; 
+varnames = ["id", "esp", "p25", "p50", "p75"]; 
+sessions = table('Size', sz, 'VariableTypes', vartypes, 'VariableNames', varnames); 
+
+for i = 1 : height(sessions)
+    load("3portdata/" + session_ids(i), "Event_timestamps"); 
+    ports = port_ids(Event_timestamps, 10);
+
+    p25 = find(ismember(ports, "25%"));
+    p50 = find(ismember(ports, "50%"));
+    p75 = find(ismember(ports, "75%"));
+    sessions(i, :) = {session_ids(i), session_esps(i), p25, p50, p75};
+    clear i Event_timestamps ports p25 p50 p75
+end 
+clear sz vartypes varnames session_ids session_esps
+%% PCA Reproduction: Fig. 2A
+% Running PCA on iFR data filtered for NP events and averaged over event durations: 
+
+top3_pcs = cell(height(sessions), 4); 
+for i = 1 : height(sessions) 
+    [filtered_and_avgd_iFRs, np_ports] = filter_and_avg_iFRs(sessions.id(i)); 
     [coeff, score, ~, ~, explained, ~] = pca(filtered_and_avgd_iFRs); 
-    top3_pcs{i, 1} = i; 
+    top3_pcs{i, 1} = sessions.id(i); 
     top3_pcs{i, 2} = np_ports; 
     top3_pcs{i, 3} = coeff(:, 1:3); 
     top3_pcs{i, 4} = score(:, 1:3); 
     top3_pcs{i, 5} = explained(1:3); 
-    clear filtered_and_avgd_iFRs np_ports coeff score explained
+    clear i filtered_and_avgd_iFRs np_ports coeff score explained
 end
-%%
-total_explained = zeros(length(session_ids), 1); 
-for i = 1 : length(session_ids)
-    total_explained(i) = sum(top3_pcs{i, 5}); 
+top3_pcs = cell2table(top3_pcs, 'VariableNames', ["id", "port_entries", "coeffs", "scores", "var_exp"])
+%% 
+% Comparing average variances explained by each PC to reported values: 
+
+explained = zeros(height(sessions), 3); 
+for i = 1 : height(sessions)
+    explained(i, :) = top3_pcs.var_exp{i}'; 
 end
-disp("Average total explained: " + mean(total_explained))
-disp("Reported total explained: " + 20.8)
-%%
-scores_by_port = cell(length(session_ids), 4); 
-for i = 1 : length(session_ids)
-    scores_by_port{i, 1} = i; 
-    [sbp25, sbp50, sbp75] = score_by_port(i, top3_pcs, session_ids, trial_esps);
+
+disp("Average var. explained by PC1: " + mean(explained(:, 1)) + "; reported 9.72%")
+disp("Average var. explained by PC2: " + mean(explained(:, 2)) + "; reported 5.93%")
+disp("Average var. explained by PC3: " + mean(explained(:, 3)) + "; reported 5.17%")
+
+total = sum(mean(explained, 1)); 
+disp("Total var. explained by top 3 PCs: " + total + "; reported 20.8%")
+clear i explained total 
+%% 
+% Faceting PCA scores by port contingency for visualization:
+
+scores_by_port = cell(height(sessions), 4); 
+for i = 1 : height(sessions)
+    scores_by_port{i, 1} = sessions.id(i); 
+    [sbp25, sbp50, sbp75] = score_by_port(i, sessions, top3_pcs);
     scores_by_port{i, 2} = sbp25; 
     scores_by_port{i, 3} = sbp50; 
     scores_by_port{i, 4} = sbp75; 
+    clear i sbp25 sbp50 sbp75
 end
-%%
-% visualize 3d plot for session 2
-sbp25 = scores_by_port{2, 2};
-sbp50 = scores_by_port{2, 3}; 
-sbp75 = scores_by_port{2, 4}; 
+scores_by_port = cell2table(scores_by_port, 'VariableNames', ["id", "sbp25", "sbp50", "sbp75"])
+%% 
+% Visualizing trajectories of neural activity in normalized top 3 PC space, 
+% faceted by port contingency: 
+
+% visualize 3d plot for session 2 ('b', index 1)
+session_id = 1; 
+sbp25 = normalize(scores_by_port.sbp25{session_id});
+sbp50 = normalize(scores_by_port.sbp50{session_id}); 
+sbp75 = normalize(scores_by_port.sbp75{session_id});
+
 plot3(sbp25(:, 1), sbp25(:, 2), sbp25(:, 3), ...
       sbp50(:, 1), sbp50(:, 2), sbp50(:, 3), ...
-      sbp75(:, 1), sbp75(:, 2), sbp50(:, 3))
-%%
-function [filtered_and_avgd_iFRs, np_ports] = filter_and_avg_iFRs(i, session_ids)
-    load("AllfERNSpikeFiles/" + session_ids(i), "Event_timestamps", "iFR", "Tmtx");
-    start = Tmtx(1); 
-    sr = 1 / (Tmtx(2) - start); 
-
-    np_event_mask = ismember(Event_timestamps(:, 3), 1:3); 
-    np_intervals = Event_timestamps(np_event_mask, 1:2);
-    np_ports = Event_timestamps(np_event_mask, 3); 
-    
-    filtered_and_avgd_iFRs = zeros(size(np_intervals, 1), size(iFR, 1));
-    for trial = 1 : size(np_intervals, 1)
-        start_tmtx = floor((np_intervals(trial, 1) - start) * sr); 
-        end_tmtx = floor((np_intervals(trial, 2) - start) * sr); 
-        filtered_and_avgd_iFRs(trial, :) = mean(iFR(:, start_tmtx:end_tmtx), 2)'; 
-    end
-    clearvars -except filtered_and_avgd_iFRs np_ports
-end
-%%
-function [sbp25, sbp50, sbp75] = score_by_port(i, top3_pcs, session_ids, trial_esps)
-    load("AllfERNSpikeFiles/" + session_ids(i), "Event_timestamps", "P25", "P50", "P75");
-    trial_esp = trial_esps(i);
-    p25_port = P25; 
-    p50_port = P50; 
-    p75_port = P75; 
-    
-    np_event_mask = ismember(Event_timestamps(:, 3), 1:3); 
-    np_ports = Event_timestamps(np_event_mask, 3);
-
-    trials25 = find(np_ports(1:trial_esp-1) == p25_port); 
-    trials25 = [trials25; (find(np_ports(trial_esp:end) == p75_port))];
-
-    trials50 = find(np_ports == p50_port);
-
-    trials75 = find(np_ports(1:trial_esp-1) == p75_port);
-    trials75 = [trials75; (find(np_ports(trial_esp:end) == p25_port))];
-    
-    pca_scores = top3_pcs{i, 4}; 
-    sbp25 = pca_scores(trials25, :); 
-    sbp50 = pca_scores(trials50, :); 
-    sbp75 = pca_scores(trials75, :); 
-    clearvars -except sbp25 sbp50 sbp75
-end
+      sbp75(:, 1), sbp75(:, 2), sbp75(:, 3))
+xlabel('PC1')
+ylabel('PC2')
+zlabel('PC3')
+title("session " + sprintf('%.1s', sessions.id(session_id)))
+legend(["25/75" "50/50", "75/25"])
+clear session_id sbp25 sbp50 sbp75
