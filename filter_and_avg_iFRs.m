@@ -13,5 +13,4 @@ function [filtered_and_avgd_iFRs, np_ports] = filter_and_avg_iFRs(session_id)
         end_tmtx = floor((np_intervals(trial, 2) - start) * sr); 
         filtered_and_avgd_iFRs(trial, :) = mean(iFR(:, start_tmtx:end_tmtx), 2)'; 
     end
-    clearvars -except filtered_and_avgd_iFRs np_ports
 end
