@@ -1,6 +1,13 @@
-% utility function to identify port contingencies based on R/NR history
-% must check whether returned `ids` contain repeated elements
-function ids = port_ids(Event_timestamps, movmean_window)
+function ids = port_ids(Event_timestamps)
+    % PORT_IDS Identify initial port contigencies based on session R/NR history.
+    %    Args: 
+    %        - Event_timestamps: as specified in `var_spec.txt`  
+    %    Out: 
+    %        - ids: (3 x 1 string) column vector of port IDs; index (1, 2, 3) of 
+    %          elements ("25%", "50%", "75%") identifies initial port contingency
+    %    Ex: 
+    %        >> port_ids(Event_timestamps, 10)
+    %           ("50%", "25%", "75%") <- P3 was the 75/25 port 
     ids = strings(3, 1); 
     hyp = stats(); 
 
@@ -9,6 +16,7 @@ function ids = port_ids(Event_timestamps, movmean_window)
     p2_rnr = ismember(Event_timestamps(:, 3), [5 8]); 
 
     % calculate running averages of R/NR history
+    movmean_window = 10; % good value in practice
     mvm1 = movmean(Event_timestamps(p1_rnr, 3), movmean_window); 
     mvm2 = movmean(Event_timestamps(p2_rnr, 3), movmean_window);
 
